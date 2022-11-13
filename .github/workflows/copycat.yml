@@ -1,0 +1,21 @@
+name: Copycat
+on:
+  push:
+    branches: [ "gh-pages" ]
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Copy Action
+      uses: andstor/copycat-action@v3
+      with:
+        personal_token: ${{ secrets.PERSONAL_TOKEN }}
+        src_path: /.
+        src_branch: gh-pages
+        dst_path: /.
+        dst_owner: V3ntus
+        dst_repo_name: v3ntus.github.io
+        dst_branch: main
+        clean: true

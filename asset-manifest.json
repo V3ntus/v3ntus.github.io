@@ -1,0 +1,14 @@
+{
+  "files": {
+    "main.css": "/static/css/main.12bcea64.css",
+    "main.js": "/static/js/main.10088114.js",
+    "static/media/Posterama.woff": "/static/media/Posterama.70fc197172fe2a5a5756.woff",
+    "index.html": "/index.html",
+    "main.12bcea64.css.map": "/static/css/main.12bcea64.css.map",
+    "main.10088114.js.map": "/static/js/main.10088114.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.12bcea64.css",
+    "static/js/main.10088114.js"
+  ]
+}
