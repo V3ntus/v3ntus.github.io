@@ -10,7 +10,7 @@ tags: [security, hardware, hacking, reverse engineering]
 Obviously, the hardware here is pretty powerful, but it's marketed for videographers. Let's hack it instead.
 
 # Extracting the Firmware  
-First thing, we need an image of whatever's running on the device. Some might dump the firmware from a EEPROM chip or NAND. Some might just look to see if the manufacturer supplies firmware update images. So let's do that, and at the time of this post, yes, Ninja V firmware updates are available to download.
+First thing we need is an image of whatever's running on the device. Now some might dump the firmware from a EEPROM chip or NAND. Some might just look to see if the manufacturer supplies firmware update images. Since that last one looks easier, let's do that. At the time of this post, yes, Ninja V firmware updates are available to download.
 
 ## Obtaining a firmware image online  
 ![AtomosFirmware](/assets/img/atomos/1.jpg)
@@ -31,7 +31,7 @@ ventus@Ventus-PC:~/atomos$ file ATOMNJV.FW
 ATOMNJV.FW: TIM image, Pixel at (7,0) Size=1052x0
 ```
 
-`file` output looks useless (maybe). Did some research and the TIM image file format is used for PlayStation development. How about `binwalk`? Might get some more valuable info on the signatures found in the file.
+`file` output looks useless (maybe). Did some research on the TIM image file format and apparently it's used for PlayStation development. That doesn't sound relevant. How about `binwalk`? Might get some more valuable info on the signatures found in the file.
 
 ```
 ventus@Ventus-PC:~/atomos$ binwalk ATOMNJV.FW
@@ -48,7 +48,7 @@ DECIMAL       HEXADECIMAL     DESCRIPTION
 243317793     0xE80BC21       LZO compressed data
 ```
 
-That's a lot to process. I would imagine most of these are false positives, but the first entry does look interesting. It's `gzip` data and occupies a large portion of the file from `0x860` to `0x786FC17`. We can verify that by `hexdump`ing the `head` of a file. Take a look at `0x860`.
+That's a lot to process. I would imagine most of these are false positives, but the first entry does look interesting. It's `gzip` data and occupies a large portion of the file supposedly from `0x860` to `0x786FC17`. We can verify that by `hexdump`ing the `head` of a file. Take a look at the `0x860` address.
 
 ```diff
 ventus@Ventus-PC:~/atomos$ head ATOMNJV.FW | hexdump
@@ -57,7 +57,7 @@ ventus@Ventus-PC:~/atomos$ head ATOMNJV.FW | hexdump
 + 0000860 8b1f 0008 0000 0000 0300 d7ec b055 3790
 ```
 
-On page 5 of the [GZIP RFC](https://www.rfc-editor.org/rfc/rfc1952), we see the specifications for member headers and trailers. ID1 and 2 are fixed values `0x1f` and `0x8b` and we can see that in the first 16 bits. The next 16 bits indicate the compression method (`0x08` equating to `deflate`) and the flag byte (`0x00` which should be `FTEXT` but is probably not important here). Let's put these fixed bytes in another `binwalk` but using the raw sequence of bytes flag.
+On page 5 of the [gzip RFC](https://datatracker.ietf.org/doc/html/rfc1952), we see the specifications for member headers and trailers. ID1 and 2 are fixed values `0x1f` and `0x8b`, and we can see that in the first two bytes. The next two bytes indicate the compression method (`0x08` equating to `deflate`) then the three flag bytes (`0x0` which should be `FTEXT` but is probably not important here). Let's put these fixed bytes in another `binwalk` but using the raw sequence of bytes flag.
 
 ```
 ventus@Ventus-PC:~/atomos$ binwalk -R "\x1f\x8b\x08" ATOMNJV.FW
@@ -88,7 +88,7 @@ DECIMAL       HEXADECIMAL     DESCRIPTION
 254533971     0xF2BE153       Raw signature (\x1f\x8b\x08)
 ```
 
-Ah, now that's a lot more results. The last found signature starts at `0xF2BE153` where the original scan stopped at `0x786FC17`. `stat` gives us a file size of `267652476` or `0xFF40D7C`. We *might* be able to assume (and most likely overshoot) that the last gzip member runs to the end of the file and still extract enough. Instead of using `binwalk` to extract, we'll just use `dd` to copy the bytes with an offset.
+Ah, now that's a lot more results. The last found signature starts at address `0xF2BE153` where the original scan stopped at `0x786FC17`. This is likely due to the original signature scan finding false positives while seeking within the gzip data. Since gzip members are not delimited, we cannot easily find the EOF which means `binwalk` didn't know exactly where the gzip ended and just searched every address. Gzip trailers do consist of a CRC, but it might just be easier to strip garbage data instead of trying to determine and calculate the CRC on the fly seeking through the binary (we might be able to see if there are trailing zeroes after the last member, which might make it easier). Although in the future, we'll probably need to ensure that when we repack this firmware, we're not overwriting trailing data past the last gzip member that we shouldn't be overwriting. Anyways back to extracting. `stat` gives us a file size of `267652476` or `0xFF40D7C`. We'll assume (and most likely overshoot) that the last gzip member runs to the end of the file and still extract enough. Instead of using `binwalk` to extract, we'll just use `dd` to copy the bytes with an offset.
 
 ```
 ventus@Ventus-PC:~/atomos$ dd if=ATOMNJV.FW bs=8 skip=268 of=fw.gz status=progress
@@ -108,7 +108,8 @@ ventus@Ventus-PC:~/atomos$ file fw
 fw: DOS/MBR boot sector, code offset 0x3c+2, OEM-ID "mkfs.fat", sectors/cluster 128, reserved sectors 128, root entries 2048, Media descriptor 0xf8, sectors/FAT 128, sectors/track 63, heads 16, sectors 539091 (volumes > 32 MB), serial number 0xca18f21f, unlabeled, FAT (16 bit)
 ```
 
-Sweet! Let's `binwalk` and get an overview.
+Sweet! As you can see, `gunzip` did find some garbage data. Probably wouldn't be a bad idea to figure out how it determines that garbage data. Let's `binwalk` the result first and get an overview.
+
 ## Walking the binary
 
 ```
