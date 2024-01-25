@@ -10,12 +10,13 @@ tags: [security, hardware, hacking, reverse engineering]
 Obviously, the hardware here is pretty powerful, but it's marketed for videographers. Let's hack it instead.
 
 # Extracting the Firmware  
-First thing, we need an image of whatever's running on the device. Some might dump the firmware from a EEPROM chip or NAND. Some might just look to see if the manufacturer supplies firmware update images. So let's do that. At the time of this post, yes, Ninja V firmware updates are available to download.
+First thing, we need an image of whatever's running on the device. Some might dump the firmware from a EEPROM chip or NAND. Some might just look to see if the manufacturer supplies firmware update images. So let's do that, and at the time of this post, yes, Ninja V firmware updates are available to download.
 
-## Obtaining a firmware image online
+## Obtaining a firmware image online  
 ![AtomosFirmware](/assets/img/atomos/1.jpg)
+<p align="center"><a href="https://www.atomos.com/product-support/">Atomos Product Support</a> provides firmware packages for their products.</p><br>
 
-EZ. Time to unzip.
+EZ. Time to unzip. After the unzip, we have a supposed firmware file, release notes, and oddly a `__MACOSX` Mac OS resource fork. 
 
 ```
 ventus@Ventus-PC:~/atomos$ ls
@@ -23,14 +24,14 @@ ATOMNJV.FW  AtomOS_10.94.01_NINJAV_Release_Notes.html  __MACOSX
 ```
 
 ## Taking a peek inside
-After the unzip, we have a supposed firmware file, release notes, and oddly a `__MACOSX` Mac OS resource fork. The firmware file is the most appealing to me right now so let's figure out how to peek inside it.
+The firmware file is the most appealing to me right now so let's figure out how to peek inside it.
 
 ```
 ventus@Ventus-PC:~/atomos$ file ATOMNJV.FW
 ATOMNJV.FW: TIM image, Pixel at (7,0) Size=1052x0
 ```
 
-Useless (maybe). How about `binwalk`?
+`file` output looks useless (maybe). Did some research and the TIM image file format is used for PlayStation development. How about `binwalk`? Might get some more valuable info on the signatures found in the file.
 
 ```
 ventus@Ventus-PC:~/atomos$ binwalk ATOMNJV.FW
@@ -48,12 +49,14 @@ DECIMAL       HEXADECIMAL     DESCRIPTION
 ```
 
 That's a lot to process. I would imagine most of these are false positives, but the first entry does look interesting. It's `gzip` data and occupies a large portion of the file from `0x860` to `0x786FC17`. We can verify that by `hexdump`ing the `head` of a file. Take a look at `0x860`.
+
 ```diff
 ventus@Ventus-PC:~/atomos$ head ATOMNJV.FW | hexdump
 0000000 0010 0000 6677 6173 0000 0100 0007 0000
 ...
 + 0000860 8b1f 0008 0000 0000 0300 d7ec b055 3790
 ```
+
 On page 5 of the [GZIP RFC](https://www.rfc-editor.org/rfc/rfc1952), we see the specifications for member headers and trailers. ID1 and 2 are fixed values `0x1f` and `0x8b` and we can see that in the first 16 bits. The next 16 bits indicate the compression method (`0x08` equating to `deflate`) and the flag byte (`0x00` which should be `FTEXT` but is probably not important here). Let's put these fixed bytes in another `binwalk` but using the raw sequence of bytes flag.
 
 ```
