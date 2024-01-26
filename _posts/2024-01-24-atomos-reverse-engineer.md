@@ -1,8 +1,8 @@
 ---
-title: "Reverse engineering the Atomos Ninja V"
+title: "Poking inside the Atomos Ninja V"
 date: 2024-01-24 12:00:00 -0500
 categories: [hardware hacking]
-tags: [security, hardware, hacking, reverse engineering]
+tags: [security, hardware, hacking]
 ---
 
 [In a recent post](https://v3ntus.github.io/posts/sony-shoot/), I got myself an Atomos Ninja V and brought it on a Sony film set to shoot some BTS. For context, the [Atomos Ninja V](https://web.archive.org/web/20231130120253/https://www.atomos.com/products/ninja-v) (now archived) is a powerful monitor and recorder for videographers that is capable of recording ProRes 4k RAW video and more.
@@ -88,7 +88,7 @@ DECIMAL       HEXADECIMAL     DESCRIPTION
 254533971     0xF2BE153       Raw signature (\x1f\x8b\x08)
 ```
 
-Ah, now that's a lot more results. The last found signature starts at address `0xF2BE153` where the original scan stopped at `0x786FC17`. This is likely due to the original signature scan finding false positives while seeking within the gzip data. Since gzip members are not delimited, we cannot easily find the EOF which means `binwalk` didn't know exactly where the gzip ended and just searched every address. Gzip trailers do consist of a CRC, but it might just be easier to strip garbage data instead of trying to determine and calculate the CRC on the fly seeking through the binary (we might be able to see if there are trailing zeroes after the last member, which might make it easier). Although in the future, we'll probably need to ensure that when we repack this firmware, we're not overwriting trailing data past the last gzip member that we shouldn't be overwriting. Anyways back to extracting. `stat` gives us a file size of `267652476` or `0xFF40D7C`. We'll assume (and most likely overshoot) that the last gzip member runs to the end of the file and still extract enough. Instead of using `binwalk` to extract, we'll just use `dd` to copy the bytes with an offset.
+Ah, now that's a lot more results. The last found signature starts at address `0xF2BE153` where the original scan stopped at `0x786FC17`. This is likely due to the original signature scan finding false positives while seeking within the gzip data. Since gzip members are not delimited, we cannot easily find the EOF which means `binwalk` didn't know exactly where the gzip ended and just searched every address. Gzip trailers do consist of a CRC, but it might just be easier to strip garbage data instead of trying to determine and calculate the CRC on the fly seeking through the binary (we might be able to see if there are trailing zeroes after the last member, which might make it easier). Anyways back to extracting. `stat` gives us a file size of `267652476` or `0xFF40D7C`. We'll assume (and most likely overshoot) that the last gzip member runs to the end of the file and still extract enough. Although in the future, we'll probably need to ensure that when we repack this firmware, we're not overwriting trailing data past the last gzip member that we shouldn't be overwriting. Instead of using `binwalk` to extract, we'll just use `dd` to copy the bytes with an offset.
 
 ```
 ventus@Ventus-PC:~/atomos$ dd if=ATOMNJV.FW bs=8 skip=268 of=fw.gz status=progress
@@ -150,7 +150,7 @@ That's quite a bit, but the data is much more promissing. FPGA bit streams, Inte
 > [!NOTE]  
 > [Atomos has confirmed](https://www.redsharknews.com/technology-computing/item/74-fpgas-the-processing-powerhouse-behind-todays-video-technology) that the Ninja series utilizes FPGA technology for accelerated hardware processing. This backs the results `binwalk` gave us stating the firmware contains FPGA bitstreams. This'll be interesting to disect later as I'll probably disassemble the device to identify the FPGA model.
 
-At this point, I found the [`radare2`](https://github.com/radareorg/radare2/) reverse engineering framework and figured it would be a good time to learn. So I took a little break from this and went off to read the [Radare book](https://book.rada.re/first_steps/intro.html).
+At this point, I found the [`radare2`](https://github.com/radareorg/radare2/) framework and figured it would be a good time to learn. So I took a little break from this and went off to read the [Radare book](https://book.rada.re/first_steps/intro.html).
 
 I did run strings on the extracted `fw` file and found interesting entries in the MBR section of the file. The last line in this snippet hints at a UBOOT environment. If we find UART or JTAG, we could interrupt the bootloader and get a pre-boot environment shell.
 ```
@@ -201,3 +201,235 @@ ROOTFS  TXT
 UBOOT   ENV
 ...
 ```
+Looking at the `hexdump` output of this part of the file, I tried to pick out any patterns such as addresses or metadata. I didn't really look too far so I skipped this for now. Could possibly be related to the U-Boot environment storage.
+```
+00030000  e5 65 00 76 00 6a 00 4e  00 00 00 0f 00 54 ff ff  |.e.v.j.N.....T..|
+00030010  ff ff ff ff ff ff ff ff  ff ff 00 00 ff ff ff ff  |................|
+00030020  e5 2e 00 75 00 62 00 6f  00 6f 00 0f 00 54 74 00  |...u.b.o.o...Tt.|
+00030030  2e 00 65 00 6e 00 76 00  2e 00 00 00 4a 00 42 00  |..e.n.v.....J.B.|
+00030040  e5 42 4f 4f 54 45 7e 31  4a 42 45 20 00 c2 76 17  |.BOOTE~1JBE ..v.|
+00030050  8c 57 8c 57 00 00 76 17  8c 57 00 00 00 00 00 00  |.W.W..v..W......|
+00030060  41 41 00 50 00 50 00 30  00 30 00 0f 00 b5 30 00  |AA.P.P.0.0....0.|
+00030070  30 00 2e 00 62 00 69 00  6e 00 00 00 00 00 ff ff  |0...b.i.n.......|
+00030080  41 50 50 30 30 30 30 20  42 49 4e 20 00 ab 76 17  |APP0000 BIN ..v.|
+00030090  8c 57 8c 57 00 00 76 17  8c 57 03 00 98 a1 38 00  |.W.W..v..W....8.|
+000300a0  41 44 00 41 00 50 00 50  00 30 00 0f 00 ef 30 00  |AD.A.P.P.0....0.|
+000300b0  30 00 30 00 2e 00 62 00  69 00 00 00 6e 00 00 00  |0.0...b.i...n...|
+```
+
+## Extracting the corpse of an embedded Linux  
+Using the manual `binwalk` method I did earlier, I went through the `fw` file and scanned for gzip members once again, but this time, adding a null byte to lessen false positives.
+```
+ventus@Ventus-PC:~/atomos$ binwalk -R "\x1f\x8b\x08\x00" fw
+
+DECIMAL       HEXADECIMAL     DESCRIPTION
+--------------------------------------------------------------------------------
+144376028     0x89B00DC       Raw signature (\x1f\x8b\x08\x00)
+152174812     0x91200DC       Raw signature (\x1f\x8b\x08\x00)
+159881880     0x9879A98       Raw signature (\x1f\x8b\x08\x00)
+195690496     0xBAA0000       Raw signature (\x1f\x8b\x08\x00)
+```
+Only four entries. Still, I'll extract a part of the file starting from the first address as the offset and going through to the end of the file.
+```
+ventus@Ventus-PC:~/atomos$ dd if=fw of=ext_fw.gz skip=764416 bs=256
+313856+0 records in
+313856+0 records out
+80347136 bytes (80 MB, 77 MiB) copied, 0.417453 s, 192 MB/s
+```
+After decompressing it, we see that the file is an `ext4` filesystem. How interesting. Let's mount it.
+```
+ventus@Ventus-PC:~/atomos$ file ext_fw
+ext_fw: Linux rev 1.0 ext4 filesystem data, UUID=bb14a1a5-f66d-42d2-920d-f8924401a174 (extents) (64bit) (large files) (huge files)
+```
+
+At this point, it's just appears to be a normal Linux directory structure. This'll take a bit to poke through.
+```
+ventus@Ventus-PC:~/atomos$ sudo mount ext_fw ./mnt/
+ventus@Ventus-PC:~/atomos$ cd mnt/
+ventus@Ventus-PC:~/atomos/mnt$ ls
+bin  boot  dev  etc  home  lib  LICENSE  lost+found  media  mnt  proc  run  sbin  sys  tmp  usr  var
+```
+
+---
+### `fstab`
+Checking out `/etc/fstab`, there are interesting mount points for certain things pertaining to assets and boot files.
+```
+ventus@Ventus-PC:~/atomos/mnt/etc$ cat fstab
+/dev/root       /                       auto    ro                              1  0
+proc            /proc                   proc    defaults                                0  0
+devpts          /dev/pts                devpts  mode=0620,gid=5                         0  0
+tmpfs           /run                    tmpfs   mode=0755,nodev,nosuid,strictatime      0  0
+tmpfs           /var/volatile           tmpfs   defaults                                0  0
+
+/dev/mmcblk0p1  /media/boot             auto    defaults,ro,noatime     0  2
+/dev/mmcblk0p2  /media/resources        auto    defaults,ro,noatime     0  2
+/dev/mmcblk0p3  /media/static           auto    defaults,ro,noatime     0  2
+# TODO not sure how to handle this
+/dev/mmcblk0p6  /media/app              ext4    defaults,ro,noauto,noatime      0  2
+
+# nonvolatile is marked as noauto, controlled by external script
+/dev/mmcblk0p7  /var/nonvolatile        ext4    defaults,noauto,noatime,nofail,data=journal     0  2
+```
+`grep`-ing for the `mmcblk0` devices shows their presence in a few custom scripts and binaries.
+```
+ventus@Ventus-PC:~/atomos/mnt/etc$ sudo grep -rl "mmcblk0p" ../
+../usr/sbin/partition-migrate
+../usr/share/core_control/migration/migrate_settings
+../usr/bin/core_control
+../etc/fstab
+```
+The first scripts seemed to organize partitions after a system update. The next two were binaries possibly related to the update process, but I haven't disassembled them yet.
+
+---
+
+### `/etc/init.d`
+Lots of stuff in here, but I removed a lot of entries that had uninteresting functionality. The ones listed appear to manage codec daemons responsible for audio and video recording.
+
+```
+ventus@Ventus-PC:~/atomos/mnt/etc/init.d$ ls -alh
+total 212K
+drwxr-xr-x  2 root root 4.0K Mar  9  2018 .
+drwxr-xr-x 37 root root 4.0K Mar  9  2018 ..
+-rwxr-xr-x  1 root root 3.0K Mar  9  2018 audio_encoder.sh
+-rwxr-xr-x  1 root root 1.7K Mar  9  2018 core_control.sh
+-rwxr-xr-x  1 root root 2.2K Mar  9  2018 partition-migrate.sh
+-rwxr-xr-x  1 root root 7.1K Mar  9  2018 streaming_pl.sh
+-rwxr-xr-x  1 root root 3.0K Mar  9  2018 talkback_pl.sh
+-rwxr-xr-x  1 root root 4.2K Mar  9  2018 video_pipeline.sh
+```
+
+Looking in `video_pipeline.sh`, sounds like debug files lived in `/home/root`.
+
+```bash
+DAEMON=/usr/bin/video_pipeline
+WRAPPER="$DAEMON.sh"
+DEBUG_DAEMON=/home/root/video_pipeline
+PERF_DAEMON=/home/root/perf/video_pipeline
+NAME=video_pipeline
+DESC="Video Pipeline service"
+```
+
+---
+
+### OS Info - `/etc/issue`
+- `/etc/issue` - `PetaLinux 2022.2_release_S10071807`
+
+---
+
+### `/etc/passwd` and `/etc/shadow`
+<details>
+  <summary><h3>Click to expand</h3></summary>
+
+    ```sh
+    # /etc/passwd
+    root:x:0:0:root:/home/root:/bin/sh
+    daemon:x:1:1:daemon:/usr/sbin:/bin/sh
+    bin:x:2:2:bin:/bin:/bin/sh
+    sys:x:3:3:sys:/dev:/bin/sh
+    sync:x:4:65534:sync:/bin:/bin/sync
+    games:x:5:60:games:/usr/games:/bin/sh
+    man:x:6:12:man:/var/cache/man:/bin/sh
+    lp:x:7:7:lp:/var/spool/lpd:/bin/sh
+    mail:x:8:8:mail:/var/mail:/bin/sh
+    news:x:9:9:news:/var/spool/news:/bin/sh
+    uucp:x:10:10:uucp:/var/spool/uucp:/bin/sh
+    proxy:x:13:13:proxy:/bin:/bin/sh
+    www-data:x:33:33:www-data:/var/www:/bin/sh
+    backup:x:34:34:backup:/var/backups:/bin/sh
+    list:x:38:38:Mailing List Manager:/var/list:/bin/sh
+    irc:x:39:39:ircd:/var/run/ircd:/bin/sh
+    gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/bin/sh
+    core_control:x:800:800::/home/core_control:/bin/sh
+    pipeline:x:801:801::/home/pipeline:/bin/sh
+    cloud:x:802:802::/home/cloud:/bin/sh
+    avahi:x:998:998::/run/avahi-daemon:/bin/false
+    messagebus:x:999:999::/var/lib/dbus:/bin/false
+    nobody:x:65534:65534:nobody:/nonexistent:/bin/sh
+
+    # /etc/shadow
+    root:*:15069:0:99999:7:::
+    daemon:*:15069:0:99999:7:::
+    bin:*:15069:0:99999:7:::
+    sys:*:15069:0:99999:7:::
+    sync:*:15069:0:99999:7:::
+    games:*:15069:0:99999:7:::
+    man:*:15069:0:99999:7:::
+    lp:*:15069:0:99999:7:::
+    mail:*:15069:0:99999:7:::
+    news:*:15069:0:99999:7:::
+    uucp:*:15069:0:99999:7:::
+    proxy:*:15069:0:99999:7:::
+    www-data:*:15069:0:99999:7:::
+    backup:*:15069:0:99999:7:::
+    list:*:15069:0:99999:7:::
+    irc:*:15069:0:99999:7:::
+    gnats:*:15069:0:99999:7:::
+    core_control:!:15069::::::
+    pipeline:!:15069::::::
+    cloud:!:15069::::::
+    avahi:!:15069::::::
+    messagebus:!:15069::::::
+    nobody:*:15069:0:99999:7:::
+    ```
+</details>
+
+---
+
+### `/etc/petalinux/`
+<details>
+  <summary><h3>Click to expand</h3></summary>
+
+    ```sh
+    # board
+    atomos-ninjav
+
+    # board-variant
+    aarch64:armv8a:cortexa72-cortexa53:mali400:vcu:zynqmp:zynqmp-ev:atomos-ninjav
+
+    # bsp
+    atomos-ninjav
+
+    # product
+    atomos-ninjav-2022.2
+
+    # soc
+    zynqmp-ev
+
+    # version
+    1.00
+    ```
+
+</details>
+
+---
+
+Some other interesting things `grep`-ing the `fw` file. Sounds like the FPGA was designed through Intel Quartus.  
+```
+ventus@Ventus-PC:~/atomos$ strings fw | grep -A2 -B2 luke
+!refer to the applicable agreement for further details.
+!Quartus Prime SVF converter 18.0
+!Device #1: 10M04SC - /home/luke/projects/phoenix_scratch/fpga/syn/expansion/exp_common/output_files/exp_common.pof Sat Apr 25 10:32:03 2020
+!NOTE "USERCODE" "002BB7BE";
+!NOTE "CHECKSUM" "02896B90";
+--
+!refer to the applicable agreement for further details.
+!Quartus Prime SVF converter 18.0
+!Device #1: 10M04SC - /home/luke/projects/phoenix_scratch/fpga/syn/expansion/exp_common/output_files/exp_common.pof Tue Apr 28 18:50:25 2020
+!NOTE "USERCODE" "002D0A80";
+!NOTE "CHECKSUM" "0284F936";
+```
+
+# Disassembly
+
+## PCB BOM
+- `EFM32-TG222F32` (TinyGecko 32bit ARM Cortex-M3 MCU) - [Link](https://www.silabs.com/mcu/32-bit-microcontrollers/efm32-tiny-gecko/device.efm32tg222f32-qfp48) (this points back to presence of a Gecko bootloader in the firmware)
+- `H26M31001HPR` (4G NAND MMC) - [Link](https://www.kynix.com/Detail/1182694/H26M31001HPR.html)
+- `H5AN4G6NAFR` (256M UHC) - [Link](https://www.findic.us/price/h5an4g6nafr-uhc-bLXabnnme.html)
+- 2x `PS8409A` (6Gbps HDMI 2.0 repeater/retimer) - [Link](https://www.paradetech.com/products/ps8409a/)
+
+## Headers
+> UART:  
+> ![UART](../assets/img/atomos/uart_atomninjav.jpg)
+
+> Debug:
+> ![DBG](../assets/img/atomos/dbg_atomninjav.jpg)
