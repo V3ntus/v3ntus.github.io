@@ -2,7 +2,7 @@
 title: "Poking inside the Atomos Ninja V"
 date: 2024-01-24 12:00:00 -0500
 categories: [hardware hacking]
-tags: [security, hardware, hacking]
+tags: [security, hardware, reverse engineering]
 ---
 
 [In a recent post](https://v3ntus.github.io/posts/sony-shoot/), I got myself an Atomos Ninja V and brought it on a Sony film set to shoot some BTS. For context, the [Atomos Ninja V](https://web.archive.org/web/20231130120253/https://www.atomos.com/products/ninja-v) (now archived) is a powerful monitor and recorder for videographers that is capable of recording ProRes 4k RAW video and more.
