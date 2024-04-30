@@ -13,17 +13,21 @@ Nothing wrong with Unity, it's capable. The issue lies when there are no integri
 
 It's all up to risk assessment. If your WPF app is only going to serve as a simple front-end for users to edit their Minecraft save file and you're not worried about the source code, then why bother?
 
-Well, paint this picture in your head: What if your software operates through a company-issued VPN requiring MFA, then giving access to crucial, client assets? There's no trust in place for the software integrity, builds were distributed via email and circulated by low-tier employees through Google Drive links. It would be easy enough to craft a malicious DLL to hook onto the application process, zip it in an existing build, and pose as a dev pushing out the newest, coolest update. You already gave the code in the DLL free passage through the tunnel, it's just a matter of what you want to do while you're inside the gates. 
+Well, paint this picture in your head: What if your software operates through a company-issued VPN requiring MFA, then giving access to crucial, client assets? There's no trust in place for the software integrity, builds are distributed via email and circulated by low-tier employees through Google Drive links. It would be easy enough to craft a malicious DLL to hook onto the application process, zip it in an existing build, and pose as a dev pushing out the newest, coolest update. You already gave the code in the DLL free passage through the tunnel, it's just a matter of what you want to do while you're inside the gates. 
 
-So that's exactly what happened.  
+And that's exactly what happened.  
 
 # MelonLoader in the Workplace
 
-[MelonLoader](https://github.com/LavaGang/MelonLoader) is well known by the gaming community to add mod support to almost any Unity game. MelonLoader utilizes DLL proxying to serve a legitimate DLL to Unity, but also registering hooks to load custom code, or mods, inside the app process. Within a "mod", you can utilize .NET reflection to access private/protected members and classes, hook onto the app/game functions to intercept their calls at runtime, and much more. Full code execution, no suspicious processes, no process migration needed. In the end, our client was informed of our concerns and life continued on I guess.
+[MelonLoader](https://github.com/LavaGang/MelonLoader) is well known by the gaming community to add mod support to almost any Unity game. MelonLoader utilizes DLL proxying to serve a legitimate DLL to Unity, but also registering hooks to load custom code, or mods, inside the app process. Within a MelonLoader mod, you can utilize .NET reflection to access private/protected members and classes, hook onto the app/game functions to intercept their calls at runtime, and much more. Full code execution, no suspicious processes, no process migration needed.
+
+The proof of concept I wrote in my vulnerability report opened an IPC pipe that let external apps control the Unity app on the victim's behalf. An excuse to send something to our client to cover our backs.
 
 # "What's the worst that could happen?"
 
 Let's say you start a software company with the goal of creating a product for users to manage their media and plan scripts for organizations. You charge licenses for your software, after all, a company is fueled on money. Joe Shmo comes in, sees the price of a license, doesn't quite like your numbers, and goes away to find an open-source alternative.
+
+![](../assets/img/dotnet_app_security/dotnet1.png)
 
 So that's kinda what happened, just with a different ending.
 
@@ -47,3 +51,40 @@ Well if you've made it this far and have your assembly in dnSpy, it should look 
 | *Image Source: [BepInEx Docs](https://docs.bepinex.dev/articles/advanced/debug/plugins_dnSpy.html)* |
 
 Hooray, you've found yourself an easy target.
+
+## Tracing a path
+
+The application immediately prompts for Activation on open:
+
+| ![](../assets/img/dotnet_app_security/dotnet3.png) |
+|:--:|
+| *Activation Wizard* |
+
+Knowing this, we'll need to search for related classes near the entry point. dnSpy gives us the entry point if we click on the module or assembly:
+
+| ![](../assets/img/dotnet_app_security/dotnet2.png) |
+|:--:|
+| *Assembly entry point* |
+
+In this case, I needed to find the [`OnStartup()`](https://learn.microsoft.com/en-us/dotnet/api/system.windows.application.onstartup?view=netframework-4.8.1) call. Inside this method were calls to display the splash screen, set up the bootstrapper, and show the main window. Nothing about showing a dialog box for activation though:
+```cs
+namespace polino.wpf.client
+{
+	public class App : Application
+	{
+		protected override void OnStartup(StartupEventArgs e)
+		{
+			base.OnStartup(e); // superclass call
+
+            // ...
+
+			this.ShowSplashScreen(cancellationTokenSource.Token); // breakpoint
+			Bootstrapper bootstrapper = this.SetupBootstrapper(); // breakpoint
+			cancellationTokenSource.Cancel();
+			this.ShowMainWindow(bootstrapper.Shell); // breakpoint
+
+            // ...
+		}
+    }
+}
+```
