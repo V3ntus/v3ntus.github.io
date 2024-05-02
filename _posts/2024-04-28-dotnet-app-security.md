@@ -74,7 +74,7 @@ namespace polino.wpf.client
 	{
 		protected override void OnStartup(StartupEventArgs e)
 		{
-			base.OnStartup(e); // superclass call
+			base.OnStartup(e); // super call
 
             // ...
 
@@ -88,3 +88,134 @@ namespace polino.wpf.client
     }
 }
 ```
+
+I hunted for the dialog call for hours, but ultimately figured it would be best to find the activation logic and patch that instead. Reason being is that we can update the UI however we like to bypass any requests to activate, but it won't change the fact that the application knows it's unlicensed. Instead of creating a facade, let's do the real thing. Doing a global search for classes that contain "activation" revealed promising results:
+
+| ![](../assets/img/dotnet_app_security/dotnet4.png) |
+|:--:|
+| *Multiple results for activation* |
+
+The module that sticks out the most was `wpf.client.Views.ActivationWizard`, though this was essentially just a WPF interface of some sort. Going to `ViewModels.ActivationWizard` though gave more interesting results.
+
+| ![](../assets/img/dotnet_app_security/dotnet5.png) |
+|:--:|
+| *Some activation logic found* |
+
+Different calls to fetch and update the license, activate trial and normal licenses, as well as WPF callbacks. We're getting closer, but we're not there yet. These all seem like "actions" done on the UI, but we need to find the source. Notice in the screenshot above that `ActivationWizardViewModel` is subclassing an `ILicenseService` class interface? Sounds like the next step, let's head that way.
+
+| ![](../assets/img/dotnet_app_security/dotnet6.png) |
+|:--:|
+| *...Where's `LicenseService`?* |
+
+There's no definition for `LicenseService`? Yes it's a case insensitive search. Yes I'm not matching whole words. Yes the selected file is correct. How is this application referencing `LicenseService`?
+
+Going back to the view model, the namespace is there:
+```cs
+// ...
+
+using polino.wpf.infrastructure.Services.License;
+
+// ...
+```
+Clicking on it gives me an empty window.
+Usually in my experience, dnSpy can resolve these references to a file and import it if it was missing in the assembly explorer, but the fact that it couldn't means something else is going on.
+
+Backing up a bit, I noticed a `Costura.AssemblyLoader` module as well as something similar in the root namespace:
+
+```cs
+using System;
+
+// Token: 0x020004EF RID: 1263
+internal class vulnerable_ProcessedByFody
+{
+	// Token: 0x040014F6 RID: 5366
+	internal const string FodyVersion = "6.8.0.0";
+
+	// Token: 0x040014F7 RID: 5367
+	internal const string Costura = "5.7.0";
+}
+```
+
+Some sort of metadata on [Fody](https://github.com/Fody/Fody), an IL weaver, post-processor for injecting functionality into an assembly. Alright, what about [Costura](https://github.com/Fody/Costura) then? Apparently an addon to Fody which lets you embed dependencies as resources. Well sure enough, there was our missing dependency:
+
+| ![](../assets/img/dotnet_app_security/dotnet7.png) |
+|:--:|
+| *Hiding in plain sight?* |
+
+Using [this Costura decompressor](https://github.com/dr4k0nia/Simple-Costura-Decompressor), we can grab these resources out of the assembly and import them into dnSpy. Sure enough, clicking on the `ILicenseService` class interface gave us actual code this time. This is just the class interface, but we can resolve the real class in the same module. The methods are lookin' like what we've been after.
+
+| ![](../assets/img/dotnet_app_security/dotnet8.png) |
+|:--:|
+| *X marks the spot* |
+
+## Trust me bro, I got a license
+
+There are a few methods of attack here. Since we know the application accepts both offline and online activation, we can either reverse engineer the offline activation logic or we can just trick the application to thinking it always has a full, non-expiring license. You don't always get this opportunity, but we're gonna take the easy way out.
+
+In the `Services.License` module, there are class methods that determine the license type. Here's the license types enum:
+
+```cs
+using System;
+
+namespace polino.wpf.infrastructure.Services.License
+{
+	// Token: 0x02000033 RID: 51
+	public enum LicenseTypes
+	{
+		// Token: 0x04000072 RID: 114
+		Unlicensed,
+		// Token: 0x04000073 RID: 115
+		FullNonExpiring,
+		// Token: 0x04000074 RID: 116
+		TimeLimited = 10,
+		// Token: 0x04000075 RID: 117
+		Lite = 100,
+		// Token: 0x04000076 RID: 118
+		UK = 200,
+		// Token: 0x04000077 RID: 119
+		Lite_UK = 400
+	}
+}
+```
+
+I dunno about you, but that `FullNonExpiring` enum looks tasty. Let's overwrite any getters for this enum to return only `FullNonExpiring`. Here's an IL example and its CS equivalent. Since we know the `FullNonExpiring` enum value is 1, we'll push 1 to the evaluation stack and return it. Very simple:
+
+```il
+.method assembly hidebysig static 
+	valuetype polino.wpf.infrastructure.Services.License.LicenseTypes DetermineLicenseType (
+		class [PLUSManaged]com.softwarekey.Client.Licensing.License lic
+	) cil managed 
+{
+	// Header Size: 12 bytes
+	// Code Size: 59 (0x3B) bytes
+	// LocalVarSig Token: 0x11000030 RID: 48
+	.maxstack 2
+	.locals init (
+		[0] valuetype polino.wpf.infrastructure.Services.License.LicenseTypes 'type',
+		[1] int32
+	)
+
+	/* (152,13)-(152,37) D:\a\1\s\polino.wpf.infrastructure\Services\License\LicenseConfiguration.cs */
+	/* 0x00002BD0 02           */ IL_0000: ldc.i4.1
+	/* 0x00002BD1 6F8301000A   */ IL_0001: ret
+} // end of method LicenseConfiguration::DetermineLicenseType
+```
+```cs
+// Token: 0x06000135 RID: 309 RVA: 0x000049C4 File Offset: 0x00002BC4
+internal static LicenseTypes DetermineLicenseType(License lic)
+{
+	return LicenseTypes.FullNonExpiring;
+}
+```
+
+Now we save the module and load up the app. Well we're missing a couple steps first. If you remember, the app used Costura to bundle this dependency internally. How do we bundle it back in? We don't have to. Theoretically, if we save this DLL right next to the executable and remove all Costura references to the internal bundled version in `Costura.AssemblyLoader`, it should load right up [thanks to abusing the dynamic-link library search order](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order).
+
+After doing so, the application starts at the main menu instead of the activation dialog. I open the About window and lo and behold, we are activated.
+
+| ![](../assets/img/dotnet_app_security/dotnet9.png) |
+|:--:|
+| *We won* |
+
+And that's how (*some*) cracks are made. If you're lucky, you get a .NET app like this and it's smooth sailing. Otherwise, I hope you enjoy learning assembly and RE.
+
+If you charge $700 for a license and put it behind a .NET framework, why even bother?
