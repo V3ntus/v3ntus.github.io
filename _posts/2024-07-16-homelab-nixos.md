@@ -42,6 +42,8 @@ We deploy Proxmox. Start from scratch. A blank canvas.
 
 Ideally, I wanted the "backbone" set up first, and that would be a NixOS LXC hosting a `nix-serve` instance as well as the appropriate credentials to deploy host configurations to the LXC's and VM's on my network.
 
+---
+
 # LXC: `nix.gladiusso.com`
 
 Nothing special, I give this container quite a bit of storage, considering the Nix store will be quite large as it's building closures for multiple hosts. It also gets a good chunk of memory (8GB) and 8 assigned CPU cores. Obviously I want closures to build fast. I clone my NixOS config repo and it's basically all set.
@@ -106,6 +108,8 @@ I don't exactly know how to do steps 3-5 efficiently, and to be frank, all of th
 
 5. Do step 3 again to properly deploy all the secrets and user passwords needed (this is kind of essential as the user accounts will be password-less and bricked if the secrets couldn't be decrypted on rebuild).
 
+---
+
 # LXC: `net.gladiusso.com`
 
 Now that the `nix` backbone is up, we need a network "backbone" (not to be confused with an actual [network backbone](https://en.wikipedia.org/wiki/Backbone_network)). The idea is to achieve standard internal DNS bindings either directly to the host or to an Nginx reverse proxy instance that goes to individual services.
@@ -150,3 +154,5 @@ in {
 For this host, I'll also set up [Technitium](https://search.nixos.org/options?channel=unstable&query=technitium) with a DNS zone for `gladiusso.com`. We'll also utilize this DNS server for ad-block lists for global network ad-blocking. Aside from the `NS` and `SOA` records, I'll add an `A` record for `dns.gladiusso.com` to point to the Nginx instance, which is this LXC.
 
 When we add new services, I'll add a virtualhost/proxy entry to the Nginx config and an `A` record to Technitium.
+
+---
