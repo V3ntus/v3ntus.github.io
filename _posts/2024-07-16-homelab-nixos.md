@@ -156,3 +156,57 @@ For this host, I'll also set up [Technitium](https://search.nixos.org/options?ch
 When we add new services, I'll add a virtualhost/proxy entry to the Nginx config and an `A` record to Technitium.
 
 ---
+
+# VM: `files.gladiusso.com`
+
+This VM is *not* going to be a NixOS system, but will be a TrueNAS instance. This will be for movies, TV shows, and music. Might set up some datasets for other purposes in the future, but for now these datasets will be NFS exports and SMB shares.
+
+---
+
+# VM: `*arr.gladiusso.com`
+
+Back to NixOS, we'll deploy an \*arr server stack on this VM which includes [Radarr](https://github.com/Radarr/Radarr) for movies, [Prowlarr](https://github.com/Prowlarr/Prowlarr) for indexer management, and [Jellyfin](https://jellyfin.org/) for media management. A [Transmission](https://transmissionbt.com/) daemon instance will be running too for downloading. As much as I like the native Transmission web UI, I decided to try out [Flood for Transmission](https://github.com/johman10/flood-for-transmission) this time.
+
+> The reason I picked a VM over an LXC was due to some weird mount issues which I think actually originated from an incorrect NFS path. An LXC might be fine, but I'm sticking with a VM since I'm already here.
+
+Other services I'll add in the future might be Flaresolvarr (there's an active issue currently that prevents the webdriver from starting), Sonarr for TV shows (girlfriend is probably going to want this more than I do), maybe a better interface such as Jellyseerr or Botdarr (my girlfriend and I are on Discord a lot).
+
+## GPU transcoding?
+
+So my T440 has a Tesla P40 GPU, which should do some decent HEVC transcoding (sadly no AV1). *But* it is passed through to another VM for LLM and Stable Diffusion apps. I could either utilize vGPU's to split the GPU for both the AI and \*arr VM's (which is difficult to get running on NixOS at the moment because of the NVIDIA GRID driver requirements), or see if I can get [`rffmpeg`](https://github.com/joshuaboniface/rffmpeg) running on NixOS which should allow me to remote transcode via the AI VM (I'll eventually add a working flake to my repo [`rffmpeg.nix`](https://github.com/V3ntus/rffmpeg.nix)).
+
+But for now, no hardware accelerated transcoding. Jellyfin's software encoding is so terrible on the Xeon Silver's though, so that's a good incentive for me to move to one of the solutions above.
+
+---
+
+# VM: `ai.gladiusso.com`
+
+A big reason of why I bought the Tesla P40 GPU back when it was $150 used was for AI applications, experimenting with LLM's for coding and [SD.NEXT](https://github.com/vladmandic/automatic) image generation.
+
+## vGPU Woes (and why you probably shouldn't try)
+
+In the \*arr setup above, I mentioned splitting my GPU for use in both transcoding and this AI VM using vGPU's. I attempted to do so below using GRID drivers:
+
+```nix
+{
+  # NVIDIA vGPU guest configuration
+  hardware.nvidia = {
+    # Explicitly use the GRID drivers from NVIDIA
+    package = config.boot.kernelPackages.nvidiaPackages.mkDriver {
+      version = nvidiaVersion;
+      url = "https://storage.googleapis.com/nvidia-drivers-us-public/GRID/vGPU16.4/NVIDIA-Linux-x86_64-${nvidiaVersion}-grid.run";
+      sha256_64bit = "sha256-o8dyPjc09cdigYWqkWJG6H/AP71bH65pfwFTS/7V9GM=";
+      useSettings = false;
+      usePersistenced = false;
+    };
+  };
+}
+```
+
+This sorta works, but as stated in [this GitHub comment](https://github.com/Yeshey/nixos-nvidia-vgpu/issues/5#issuecomment-2255714743) in the `nixos-nvidia-vgpu` repo, some work needs to be done to ensure the extra services required for the GRID drivers set up the vGPU correctly. I was not able to get the vGPU licensed even though I had FastAPI-DLS sending out a license. Such a hacky and unsupported solution.
+
+Moving on...
+
+## Open WebUI + ollama
+
+LLM's are wonderful tools. At my job, we pay for ChatGPT 4o, which has been nice, but ChatGPT is slow, and 4o needs some extra guidance (or I just need to be more verbose in prompting). Since I have a decent GPU with quite a bit of VRAM (24GB to be exact), why not self-host an LLM? The biggest model I was able to run was [`dolphin-mixtral:8x7b`](https://ollama.com/library/dolphin-mixtral:8x7b). I was also able to run Stable Diffusion models on the GPU as well, running 512x768 with 3it/s using RealisticVision_v6. This could be optimized more, but I haven't dedicated that time.
