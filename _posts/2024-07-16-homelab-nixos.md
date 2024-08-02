@@ -46,6 +46,8 @@ Ideally, I wanted the "backbone" set up first, and that would be a NixOS LXC hos
 
 # LXC: `nix.gladiusso.com`
 
+> Source: [`hosts/homelab/nix`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/nix/configuration.nix)
+
 Nothing special, I give this container quite a bit of storage, considering the Nix store will be quite large as it's building closures for multiple hosts. It also gets a good chunk of memory (8GB) and 8 assigned CPU cores. Obviously I want closures to build fast. I clone my NixOS config repo and it's basically all set.
 
 # Going remote
@@ -82,6 +84,8 @@ Here's what it looks like:
 }
 ```
 
+> Source: [`hosts/homelab/_base`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/_base/configuration.nix)
+
 ## Deploying a new LXC/VM
 
 I don't exactly know how to do steps 3-5 efficiently, and to be frank, all of this could be automated somehow, I haven't gotten to it yet.
@@ -111,6 +115,8 @@ I don't exactly know how to do steps 3-5 efficiently, and to be frank, all of th
 ---
 
 # LXC: `net.gladiusso.com`
+
+> Source: [`hosts/homelab/net`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/net/configuration.nix)
 
 Now that the `nix` backbone is up, we need a network "backbone" (not to be confused with an actual [network backbone](https://en.wikipedia.org/wiki/Backbone_network)). The idea is to achieve standard internal DNS bindings either directly to the host or to an Nginx reverse proxy instance that goes to individual services.
 
@@ -149,6 +155,8 @@ in {
 }
 ```
 
+> Source: [`hosts/homelab/net/nginx.nix`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/net/nginx.nix)
+
 ## Technitium DNS
 
 For this host, I'll also set up [Technitium](https://search.nixos.org/options?channel=unstable&query=technitium) with a DNS zone for `gladiusso.com`. We'll also utilize this DNS server for ad-block lists for global network ad-blocking. Aside from the `NS` and `SOA` records, I'll add an `A` record for `dns.gladiusso.com` to point to the Nginx instance, which is this LXC.
@@ -165,11 +173,15 @@ This VM is *not* going to be a NixOS system, but will be a TrueNAS instance. Thi
 
 # VM: `*arr.gladiusso.com`
 
+> Source: [`hosts/homelab/arr`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/arr/configuration.nix)
+
 Back to NixOS, we'll deploy an \*arr server stack on this VM which includes [Radarr](https://github.com/Radarr/Radarr) for movies, [Prowlarr](https://github.com/Prowlarr/Prowlarr) for indexer management, and [Jellyfin](https://jellyfin.org/) for media management. A [Transmission](https://transmissionbt.com/) daemon instance will be running too for downloading. As much as I like the native Transmission web UI, I decided to try out [Flood for Transmission](https://github.com/johman10/flood-for-transmission) this time.
 
 > The reason I picked a VM over an LXC was due to some weird mount issues which I think actually originated from an incorrect NFS path. An LXC might be fine, but I'm sticking with a VM since I'm already here.
 
 Other services I'll add in the future might be Flaresolvarr (there's an active issue currently that prevents the webdriver from starting), Sonarr for TV shows (girlfriend is probably going to want this more than I do), maybe a better interface such as Jellyseerr or Botdarr (my girlfriend and I are on Discord a lot).
+
+> Source: [`hosts/homelab/arr/arr.nix`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/arr/arr.nix)
 
 ## GPU transcoding?
 
@@ -180,6 +192,8 @@ But for now, no hardware accelerated transcoding. Jellyfin's software encoding i
 ---
 
 # VM: `ai.gladiusso.com`
+
+> Source: [`hosts/homelab/ai`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/ai/configuration.nix)
 
 A big reason of why I bought the Tesla P40 GPU back when it was $150 used was for AI applications, experimenting with LLM's for coding and [SD.NEXT](https://github.com/vladmandic/automatic) image generation.
 
@@ -210,3 +224,5 @@ Moving on...
 ## Open WebUI + ollama
 
 LLM's are wonderful tools. At my job, we pay for ChatGPT 4o, which has been nice, but ChatGPT is slow, and 4o needs some extra guidance (or I just need to be more verbose in prompting). Since I have a decent GPU with quite a bit of VRAM (24GB to be exact), why not self-host an LLM? The biggest model I was able to run was [`dolphin-mixtral:8x7b`](https://ollama.com/library/dolphin-mixtral:8x7b). I was also able to run Stable Diffusion models on the GPU as well, running 512x768 with 3it/s using RealisticVision_v6. This could be optimized more, but I haven't dedicated that time.
+
+> Source: [`hosts/homelab/ai/ai_services.nix`](https://github.com/V3ntus/nixos/blob/main/hosts/homelab/ai/ai_services.nix)
