@@ -7,9 +7,7 @@ tags: [virtualization, server administration]
 
 > *TLDR: Deploying containers and VMs on Proxmox utilizing my personal NixOS configs on my [Github repo](https://github.com/V3ntus/nixos)*
 
-# The Nix rabbit hole
-
-![nix-in-a-nutshell](/assets/img/sam_nix.png)  
+# The Nix rabbit hole  
 
 Nix is a declarative build environment and functional language. NixOS is an operating system built around Nix and applies the concept of fully reproducible and declarative configuration of the operating system. As such, NixOS does not follow the FHS standard and instead symlinks many commonly accessed paths to the Nix store, which is read-only and immutable by default. Previously, I was a life-long Debian user because of its simplicity, but the aspect of reproducible and declarative environments became highly appealing.
 
@@ -238,3 +236,5 @@ LLM's are wonderful tools. At my job, we pay for ChatGPT 4o, which has been nice
 ## The end?
 
 As time goes on, my list of services hosted at home will change. Self-hosting is a broad field, software is nearly limitless. Deploying is (mostly) even faster now thanks to the Nix package manager and its community-maintained repositories.
+
+![nix-in-a-nutshell](/assets/img/sam_nix.png)
